@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Pending Work Reminder Clock</title>
+
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#020617" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Pending Work" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<link rel="icon" href="icon-192.png" />
+
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- React 18 UMD builds — classic scripts, no ES modules -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+<!-- Babel compiler library only — its "auto-scan the page" feature is NOT used below -->
+<script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin="anonymous"></script>
+
+<style>
+  html, body { background:#020617; overscroll-behavior:none; margin:0; }
+  * { -webkit-tap-highlight-color: transparent; }
+  #boot-error { display:none; color:#fca5a5; font-family:monospace; font-size:12px;
+                white-space:pre-wrap; padding:16px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="boot-error"></div>
+<div style="position:fixed;bottom:2px;right:4px;z-index:9999;font-family:monospace;font-size:9px;color:#475569;pointer-events:none;">build v5-diag</div>
+<div id="diag" style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#000;color:#4ade80;font-family:monospace;font-size:11px;white-space:pre-wrap;padding:8px;border-bottom:1px solid #333;"></div>
+
+<!-- The app source sits here as inert plain text — the browser will not execute it,
+     and Babel's page-auto-scan feature will not touch it either, since it isn't
+     type="text/babel". We compile and run it ourselves below, with full error control. -->
+<script type="text/plain" id="app-source">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+/* Hand-drawn inline icon set (mirrors the lucide icons used in the app) —
+   avoids depending on an external icon package/CDN entirely. */
+function Icon({ size = 16, className, children }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+      {children}
+    </svg>
+  );
+}
+const Bell = (p) => <Icon {...p}><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></Icon>;
+const BellOff = (p) => <Icon {...p}><path d="M8.7 3A6 6 0 0 1 18 8c0 2.1.3 3.7.8 5" /><path d="M17 17H3s3-2 3-9c0-.4 0-.8.1-1.2" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /><line x1="2" y1="2" x2="22" y2="22" /></Icon>;
+const Plus = (p) => <Icon {...p}><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></Icon>;
+const X = (p) => <Icon {...p}><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></Icon>;
+const Check = (p) => <Icon {...p}><polyline points="20 6 9 17 4 12" /></Icon>;
+const Trash2 = (p) => <Icon {...p}><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" /></Icon>;
+const Sun = (p) => <Icon {...p}><circle cx="12" cy="12" r="4" /><line x1="12" y1="2" x2="12" y2="4" /><line x1="12" y1="20" x2="12" y2="22" /><line x1="4.2" y1="4.2" x2="5.6" y2="5.6" /><line x1="18.4" y1="18.4" x2="19.8" y2="19.8" /><line x1="2" y1="12" x2="4" y2="12" /><line x1="20" y1="12" x2="22" y2="12" /><line x1="4.2" y1="19.8" x2="5.6" y2="18.4" /><line x1="18.4" y1="5.6" x2="19.8" y2="4.2" /></Icon>;
+const Moon = (p) => <Icon {...p}><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z" /></Icon>;
+const Download = (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></Icon>;
+const Upload = (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" /></Icon>;
+const HomeIcon = (p) => <Icon {...p}><path d="M3 9.5 12 3l9 6.5" /><path d="M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10" /></Icon>;
+const CalendarDays = (p) => <Icon {...p}><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></Icon>;
+const ListChecks = (p) => <Icon {...p}><path d="M3 6l2 2 4-4" /><path d="M3 14l2 2 4-4" /><line x1="11" y1="6" x2="21" y2="6" /><line x1="11" y1="14" x2="21" y2="14" /></Icon>;
+const SettingsIcon = (p) => <Icon {...p}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.6 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></Icon>;
+const AlarmClock = (p) => <Icon {...p}><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2.5" /><path d="M5 3 3 5" /><path d="M19 3l2 2" /><path d="M8 2h8" /></Icon>;
+const Languages = (p) => <Icon {...p}><path d="M4 8h8" /><path d="M7 5v3a8 8 0 0 1-5 7" /><path d="M3 12a10 10 0 0 0 6-3" /><path d="M13 21l4-9 4 9" /><path d="M15.3 17h3.4" /></Icon>;
+const Pencil = (p) => <Icon {...p}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" /></Icon>;
+const RotateCcw = (p) => <Icon {...p}><polyline points="1 4 1 10 7 10" /><path d="M3.5 15a9 9 0 1 0 2-9.5L1 10" /></Icon>;
+const AlertTriangle = (p) => <Icon {...p}><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><line x1="12" y1="9" x2="12" y2="13" /><circle cx="12" cy="17" r="0.5" fill="currentColor" /></Icon>;
+const ChevronRight = (p) => <Icon {...p}><polyline points="9 18 15 12 9 6" /></Icon>;
+const AlertOctagon = (p) => <Icon {...p}><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2" /><line x1="12" y1="8" x2="12" y2="12" /><circle cx="12" cy="16" r="0.5" fill="currentColor" /></Icon>;
+const Sunrise = (p) => <Icon {...p}><path d="M12 2v6" /><path d="m4.9 10.1 1.4 1.4" /><path d="m17.7 11.5 1.4-1.4" /><path d="M2 18h20" /><path d="M6 14a6 6 0 0 1 12 0" /><path d="M4 22h16" /></Icon>;
+const CalendarClock = (p) => <Icon {...p}><path d="M8 2v3" /><path d="M16 2v3" /><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M3 10h18" /><circle cx="16" cy="16" r="3.2" /><path d="M16 14.8V16l.9.9" /></Icon>;
+const CheckCircle2 = (p) => <Icon {...p}><circle cx="12" cy="12" r="10" /><path d="m9 12 2 2 4-4" /></Icon>;
+
+
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error(error, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 20, fontFamily: "monospace", color: "#fca5a5", background: "#020617", minHeight: "100vh" }}>
+          <p style={{ fontWeight: "bold", marginBottom: 8 }}>Something went wrong.</p>
+          <p style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>{String(this.state.error && this.state.error.message)}</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+
+/* ---------------------------------------------------------------------- */
+/*  Storage layer — tries real localStorage, silently falls back to an   */
+/*  in-memory store if the environment blocks it (e.g. sandboxed preview) */
+/* ---------------------------------------------------------------------- */
+const memoryStore = {};
+const storage = {
+  get(key, fallback) {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (raw !== null) return JSON.parse(raw);
+    } catch (e) {
+      /* blocked or unavailable — fall through to memory */
+    }
+    return key in memoryStore ? memoryStore[key] : fallback;
+  },
+  set(key, value) {
+    memoryStore[key] = value;
+    try {
+      window.localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) {
+      /* blocked — memory copy above still keeps the app working this session */
+    }
+  },
+};
+
+const TASKS_KEY = "pwrc_tasks_v1";
+const SETTINGS_KEY = "pwrc_settings_v1";
+
+/* ---------------------------------------------------------------------- */
+/*  i18n                                                                   */
+/* ---------------------------------------------------------------------- */
+const translations = {
+  en: {
+    appName: "Pending Work Reminder Clock",
+    tagline: "Know what's due, right now.",
+    home: "Home", calendar: "Calendar", completed: "Completed", settings: "Settings",
+    addTask: "Add task", overdue: "Overdue", dueToday: "Due today", upcoming: "Upcoming",
+    noOverdue: "Nothing overdue. Good.", noToday: "Nothing due today.",
+    noUpcoming: "No upcoming work scheduled.", noCompleted: "No completed tasks yet.",
+    title: "Title", description: "Description (optional)", priority: "Priority",
+    dueDate: "Due date", dueTime: "Due time", category: "Category",
+    repeat: "Repeat reminder", alertVia: "Alert via", newTask: "New task", editTask: "Edit task",
+    low: "Low", medium: "Medium", high: "High",
+    noRepeat: "Don't repeat", every15: "Every 15 min", every30: "Every 30 min",
+    every1h: "Every hour", every2h: "Every 2 hours", every6h: "Every 6 hours", every24h: "Every day",
+    notification: "Notification", sound: "Sound",
+    save: "Save", cancel: "Cancel", delete: "Delete", markDone: "Mark done", reopen: "Reopen",
+    snooze: "Snooze", min: "min", close: "Close",
+    darkMode: "Dark mode", language: "Language", notifPermTitle: "Browser notifications",
+    enableNotif: "Enable notifications", granted: "Enabled", denied: "Blocked in browser",
+    notAsked: "Not enabled yet", unsupported: "Not supported on this device",
+    dataTitle: "Backup", exportBackup: "Export backup (.json)", importBackup: "Import backup (.json)",
+    clearAll: "Clear all data", clearConfirm: "Delete every task? This can't be undone.",
+    titleRequired: "Please enter a title", noTasksAtAll: "No pending work yet — add your first task.",
+    stats: "tasks pending", allClear: "All clear",
+    exportedOn: "Exported", importSuccess: "Backup imported.", importFail: "Couldn't read that file.",
+    calendarEmpty: "Nothing scheduled.", restore: "Restore", confirmDelete: "Delete this task?",
+    snoozedUntil: "Snoozed until", showingAll: "Showing all", clearFilter: "Show all",
+    uncategorized: "General",
+  },
+  hi: {
+    appName: "पेंडिंग वर्क रिमाइंडर क्लॉक",
+    tagline: "अभी क्या ड्यू है, एक नज़र में।",
+    home: "होम", calendar: "कैलेंडर", completed: "पूर्ण", settings: "सेटिंग्स",
+    addTask: "कार्य जोड़ें", overdue: "समय निकल गया", dueToday: "आज देय", upcoming: "आगामी",
+    noOverdue: "कुछ भी ओवरड्यू नहीं है।", noToday: "आज कुछ भी देय नहीं है।",
+    noUpcoming: "कोई आगामी कार्य नहीं है।", noCompleted: "अभी तक कोई कार्य पूर्ण नहीं हुआ।",
+    title: "शीर्षक", description: "विवरण (वैकल्पिक)", priority: "प्राथमिकता",
+    dueDate: "देय तिथि", dueTime: "देय समय", category: "श्रेणी",
+    repeat: "रिमाइंडर दोहराएं", alertVia: "अलर्ट का माध्यम", newTask: "नया कार्य", editTask: "कार्य संपादित करें",
+    low: "कम", medium: "मध्यम", high: "उच्च",
+    noRepeat: "न दोहराएं", every15: "हर 15 मिनट", every30: "हर 30 मिनट",
+    every1h: "हर घंटे", every2h: "हर 2 घंटे", every6h: "हर 6 घंटे", every24h: "प्रतिदिन",
+    notification: "नोटिफिकेशन", sound: "ध्वनि",
+    save: "सहेजें", cancel: "रद्द करें", delete: "हटाएं", markDone: "पूर्ण करें", reopen: "फिर से खोलें",
+    snooze: "स्नूज़", min: "मिनट", close: "बंद करें",
+    darkMode: "डार्क मोड", language: "भाषा", notifPermTitle: "ब्राउज़र नोटिफिकेशन",
+    enableNotif: "नोटिफिकेशन सक्षम करें", granted: "सक्षम", denied: "ब्राउज़र में अवरुद्ध",
+    notAsked: "अभी सक्षम नहीं है", unsupported: "इस डिवाइस पर समर्थित नहीं",
+    dataTitle: "बैकअप", exportBackup: "बैकअप निर्यात करें (.json)", importBackup: "बैकअप आयात करें (.json)",
+    clearAll: "सारा डेटा हटाएं", clearConfirm: "सभी कार्य हटाएं? यह पूर्ववत नहीं किया जा सकता।",
+    titleRequired: "कृपया शीर्षक दर्ज करें", noTasksAtAll: "अभी कोई पेंडिंग कार्य नहीं — पहला कार्य जोड़ें।",
+    stats: "कार्य लंबित", allClear: "सब ठीक है",
+    exportedOn: "निर्यात किया गया", importSuccess: "बैकअप आयात हो गया।", importFail: "यह फ़ाइल पढ़ी नहीं जा सकी।",
+    calendarEmpty: "कुछ भी निर्धारित नहीं है।", restore: "पुनर्स्थापित करें", confirmDelete: "यह कार्य हटाएं?",
+    snoozedUntil: "स्नूज़ किया गया", showingAll: "सभी दिखाए जा रहे हैं", clearFilter: "सभी दिखाएं",
+    uncategorized: "सामान्य",
+  },
+};
+
+/* ---------------------------------------------------------------------- */
+/*  Small helpers                                                          */
+/* ---------------------------------------------------------------------- */
+const cx = (...parts) => parts.filter(Boolean).join(" ");
+const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+function toLocalInputDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+function toLocalInputTime(d) { return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
+function combineDateTime(dateStr, timeStr) { return `${dateStr}T${timeStr}`; }
+function sameCalendarDay(a, b) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+function formatDateLabel(dateStr, lang) {
+  const d = new Date(dateStr + "T00:00:00");
+  return d.toLocaleDateString(lang === "hi" ? "hi-IN" : "en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+}
+function formatDueShort(dueDateTime, lang) {
+  const d = new Date(dueDateTime);
+  const datePart = d.toLocaleDateString(lang === "hi" ? "hi-IN" : "en-IN", { day: "numeric", month: "short" });
+  const timePart = d.toLocaleTimeString(lang === "hi" ? "hi-IN" : "en-IN", { hour: "2-digit", minute: "2-digit" });
+  return `${datePart}, ${timePart}`;
+}
+function getStatus(task, now) {
+  if (task.completed) return "completed";
+  const due = new Date(task.dueDateTime).getTime();
+  if (due < now.getTime()) return "overdue";
+  if (sameCalendarDay(new Date(task.dueDateTime), now)) return "today";
+  return "upcoming";
+}
+function playBeep() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    [0, 0.22].forEach((delay) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "sine";
+      o.frequency.value = 880;
+      g.gain.setValueAtTime(0.0001, ctx.currentTime + delay);
+      g.gain.exponentialRampToValueAtTime(0.16, ctx.currentTime + delay + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + delay + 0.18);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(ctx.currentTime + delay);
+      o.stop(ctx.currentTime + delay + 0.2);
+    });
+    setTimeout(() => { try { ctx.close(); } catch (e) {} }, 700);
+  } catch (e) { /* audio unavailable */ }
+}
+
+const REPEAT_OPTIONS = [0, 15, 30, 60, 120, 360, 1440];
+const repeatLabelKey = (m) => ({
+  0: "noRepeat", 15: "every15", 30: "every30", 60: "every1h", 120: "every2h", 360: "every6h", 1440: "every24h",
+}[m]);
+
+const CATEGORY_SUGGESTIONS = ["Case Work", "Court", "Report", "Follow-up", "Investigation", "Personal", "Business", "Other"];
+
+/* category -> stable color, so the same category always reads the same
+   badge color across the whole app (this is the "work classification" cue) */
+const CATEGORY_PALETTE = [
+  { bg: "bg-indigo-500/15", text: "text-indigo-300", dot: "bg-indigo-400" },
+  { bg: "bg-sky-500/15", text: "text-sky-300", dot: "bg-sky-400" },
+  { bg: "bg-emerald-500/15", text: "text-emerald-300", dot: "bg-emerald-400" },
+  { bg: "bg-fuchsia-500/15", text: "text-fuchsia-300", dot: "bg-fuchsia-400" },
+  { bg: "bg-orange-500/15", text: "text-orange-300", dot: "bg-orange-400" },
+  { bg: "bg-teal-500/15", text: "text-teal-300", dot: "bg-teal-400" },
+  { bg: "bg-rose-500/15", text: "text-rose-300", dot: "bg-rose-400" },
+  { bg: "bg-violet-500/15", text: "text-violet-300", dot: "bg-violet-400" },
+];
+function categoryStyle(category) {
+  if (!category) return { bg: "bg-slate-500/15", text: "text-slate-300", dot: "bg-slate-400" };
+  let hash = 0;
+  for (let i = 0; i < category.length; i++) hash = (hash * 31 + category.charCodeAt(i)) >>> 0;
+  return CATEGORY_PALETTE[hash % CATEGORY_PALETTE.length];
+}
+
+/* ---------------------------------------------------------------------- */
+/*  Theme tokens — real Tailwind core-palette classes only (no arbitrary  */
+/*  bg-[#hex] values, since this preview has no JIT compiler)             */
+/* ---------------------------------------------------------------------- */
+function useThemeTokens(dark) {
+  return useMemo(() => (dark ? {
+    bg: "bg-slate-950", surface: "bg-slate-900", surfaceAlt: "bg-slate-800",
+    text: "text-slate-100", muted: "text-slate-400", border: "border-slate-700",
+    inputBg: "bg-slate-950", ring: "focus:ring-amber-400/40", onAccent: "text-slate-900",
+    shadow: "shadow-black/40",
+  } : {
+    bg: "bg-stone-100", surface: "bg-white", surfaceAlt: "bg-stone-100",
+    text: "text-stone-900", muted: "text-gray-500", border: "border-stone-200",
+    inputBg: "bg-white", ring: "focus:ring-amber-500/30", onAccent: "text-stone-900",
+    shadow: "shadow-stone-300/60",
+  }), [dark]);
+}
+
+/* ---------------------------------------------------------------------- */
+/*  Live clock hero                                                        */
+/* ---------------------------------------------------------------------- */
+function ClockHero({ now, T, lang, th, pendingCount }) {
+  const time = now.toLocaleTimeString(lang === "hi" ? "hi-IN" : "en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  const date = now.toLocaleDateString(lang === "hi" ? "hi-IN" : "en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  return (
+    <div className={cx("px-5 pt-6 pb-5 border-b", th.border, th.surface)}>
+      <div className="flex items-center justify-between">
+        <div>
+          <p className={cx("text-xs uppercase tracking-wide font-semibold", th.muted)}>{T.appName}</p>
+          <div className="font-mono text-5xl leading-none tabular-nums mt-2 text-amber-400">
+            {time}
+          </div>
+          <p className={cx("text-sm mt-1.5", th.muted)}>{date}</p>
+        </div>
+        <div className={cx("text-right rounded-2xl px-4 py-3 border", th.border, th.surfaceAlt)}>
+          <div className={cx("text-3xl font-bold tabular-nums leading-none", pendingCount > 0 ? "text-amber-400" : "text-emerald-400")}>
+            {pendingCount}
+          </div>
+          <p className={cx("text-[11px] mt-1 font-medium", th.muted)}>{pendingCount > 0 ? T.stats : T.allClear}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/*  Dashboard stat cards — tap to filter Home view                        */
+/* ---------------------------------------------------------------------- */
+function StatCards({ counts, filter, setFilter, T, th }) {
+  const cards = [
+    { key: "overdue", label: T.overdue, count: counts.overdue, icon: AlertOctagon, ring: "ring-red-500", iconBg: "bg-red-500/15", iconText: "text-red-400", numText: "text-red-400" },
+    { key: "today", label: T.dueToday, count: counts.today, icon: Sunrise, ring: "ring-amber-400", iconBg: "bg-amber-400/15", iconText: "text-amber-400", numText: "text-amber-400" },
+    { key: "upcoming", label: T.upcoming, count: counts.upcoming, icon: CalendarClock, ring: "ring-sky-400", iconBg: "bg-sky-400/15", iconText: "text-sky-400", numText: "text-sky-400" },
+    { key: "completed", label: T.completed, count: counts.completed, icon: CheckCircle2, ring: "ring-emerald-400", iconBg: "bg-emerald-400/15", iconText: "text-emerald-400", numText: "text-emerald-400" },
+  ];
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 px-3 pt-3">
+      {cards.map(({ key, label, count, icon: Icon, iconBg, iconText, numText, ring }) => {
+        const active = filter === key;
+        return (
+          <button
+            key={key}
+            onClick={() => setFilter(active ? "all" : key)}
+            className={cx(
+              "rounded-xl border px-3 py-2.5 text-left transition-shadow",
+              th.border, th.surface,
+              active ? cx("ring-2", ring) : ""
+            )}
+          >
+            <div className="flex items-center justify-between">
+              <span className={cx("h-7 w-7 rounded-lg flex items-center justify-center", iconBg)}>
+                <Icon size={15} className={iconText} />
+              </span>
+              <span className={cx("text-2xl font-bold tabular-nums", numText)}>{count}</span>
+            </div>
+            <p className={cx("text-xs font-medium mt-1.5", th.muted)}>{label}</p>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/*  Task card                                                              */
+/* ---------------------------------------------------------------------- */
+const PRIORITY_BAR = { high: "bg-red-500", medium: "bg-amber-400", low: "bg-slate-400" };
+const PRIORITY_TEXT = { high: "text-red-400", medium: "text-amber-400", low: "text-slate-400" };
+const PRIORITY_BADGE = {
+  high: "bg-red-500/15 text-red-400", medium: "bg-amber-400/15 text-amber-400", low: "bg-slate-400/15 text-slate-400",
+};
+
+function TaskCard({ task, now, T, lang, th, onToggle, onEdit, onDelete, onSnooze }) {
+  const status = getStatus(task, now);
+  const [snoozeOpen, setSnoozeOpen] = useState(false);
+  const isSnoozed = task.snoozedUntil && new Date(task.snoozedUntil).getTime() > now.getTime();
+  const catStyle = categoryStyle(task.category);
+
+  return (
+    <div className={cx(
+      "relative flex gap-3 rounded-xl border p-3 shadow-sm",
+      th.border, th.surface, th.shadow,
+      status === "overdue" && !task.completed ? "border-red-500/50" : ""
+    )}>
+      <div className={cx("w-1 rounded-full shrink-0 self-stretch", PRIORITY_BAR[task.priority])} />
+      <button
+        onClick={() => onToggle(task.id)}
+        className={cx(
+          "mt-0.5 h-5 w-5 shrink-0 rounded-full border flex items-center justify-center transition-colors",
+          task.completed ? "bg-emerald-500 border-emerald-500" : cx(th.border, "hover:border-amber-400")
+        )}
+        aria-label={T.markDone}
+      >
+        {task.completed && <Check size={13} className="text-white" strokeWidth={3} />}
+      </button>
+
+      <div className="flex-1 min-w-0">
+        <div className="flex items-start justify-between gap-2">
+          <p className={cx("font-semibold leading-snug break-words", task.completed && "line-through opacity-60", th.text)}>
+            {task.title}
+          </p>
+          <button onClick={() => onEdit(task)} className={cx(th.muted, "shrink-0 p-1 -mr-1")}>
+            <Pencil size={14} />
+          </button>
+        </div>
+        {task.description && (
+          <p className={cx("text-sm mt-0.5 break-words", th.muted, task.completed && "line-through opacity-60")}>{task.description}</p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-1.5 mt-2">
+          <span className={cx(
+            "font-mono tabular-nums text-xs px-2 py-0.5 rounded-md",
+            status === "overdue" && !task.completed ? "bg-red-500/15 text-red-400 font-semibold" : cx(th.surfaceAlt, th.muted)
+          )}>
+            {formatDueShort(task.dueDateTime, lang)}
+          </span>
+          <span className={cx("text-xs px-2 py-0.5 rounded-md font-medium flex items-center gap-1", catStyle.bg, catStyle.text)}>
+            <span className={cx("h-1.5 w-1.5 rounded-full", catStyle.dot)} />
+            {task.category || T.uncategorized}
+          </span>
+          <span className={cx("text-xs px-2 py-0.5 rounded-md font-medium uppercase tracking-wide", PRIORITY_BADGE[task.priority])}>
+            {T[task.priority]}
+          </span>
+          {isSnoozed && (
+            <span className={cx("text-xs px-2 py-0.5 rounded-md font-medium flex items-center gap-1", "bg-violet-500/15 text-violet-300")}>
+              <AlarmClock size={11} /> {new Date(task.snoozedUntil).toLocaleTimeString(lang === "hi" ? "hi-IN" : "en-IN", { hour: "2-digit", minute: "2-digit" })}
+            </span>
+          )}
+        </div>
+
+        {!task.completed ? (
+          <div className="mt-2.5 flex items-center gap-2 relative">
+            <button
+              onClick={() => setSnoozeOpen((v) => !v)}
+              className={cx("text-xs px-2.5 py-1.5 rounded-lg border flex items-center gap-1 font-medium", th.border, th.muted, "hover:text-amber-400 hover:border-amber-400/50")}
+            >
+              <AlarmClock size={12} /> {T.snooze}
+            </button>
+            <button
+              onClick={() => onDelete(task.id)}
+              className="text-xs px-2.5 py-1.5 rounded-lg border border-red-500/30 flex items-center gap-1 font-medium text-red-400 hover:bg-red-500/10"
+            >
+              <Trash2 size={12} /> {T.delete}
+            </button>
+            {snoozeOpen && (
+              <div className={cx("absolute z-10 top-9 left-0 rounded-lg border shadow-lg flex overflow-hidden", th.border, th.surfaceAlt)}>
+                {[5, 10, 15, 30].map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => { onSnooze(task.id, m); setSnoozeOpen(false); }}
+                    className={cx("px-3 py-2 text-xs font-mono hover:bg-amber-400/10 hover:text-amber-400", th.text)}
+                  >
+                    {m}{T.min}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <button
+            onClick={() => onToggle(task.id)}
+            className={cx("mt-2.5 text-xs px-2.5 py-1.5 rounded-lg border flex items-center gap-1 w-fit font-medium", th.border, th.muted, "hover:text-amber-400")}
+          >
+            <RotateCcw size={12} /> {T.reopen}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/*  Section (Overdue / Today / Upcoming)                                   */
+/* ---------------------------------------------------------------------- */
+function Section({ label, count, icon: Icon, iconBg, iconText, children, empty, th }) {
+  return (
+    <div className="mt-5 first:mt-0">
+      <div className="flex items-center gap-2 px-1 mb-2">
+        <span className={cx("h-6 w-6 rounded-md flex items-center justify-center", iconBg)}>
+          <Icon size={13} className={iconText} />
+        </span>
+        <h2 className={cx("text-sm font-bold", th.text)}>{label}</h2>
+        <span className={cx("text-xs font-mono", th.muted)}>{count}</span>
+      </div>
+      {count === 0 ? (
+        <p className={cx("text-sm py-2 px-1", th.muted)}>{empty}</p>
+      ) : (
+        <div className="space-y-2">{children}</div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/*  Task form modal (add / edit)                                           */
+/* ---------------------------------------------------------------------- */
+function TaskFormModal({ open, onClose, onSubmit, initial, T, th }) {
+  const now = new Date();
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [priority, setPriority] = useState("medium");
+  const [date, setDate] = useState(toLocalInputDate(now));
+  const [time, setTime] = useState(toLocalInputTime(new Date(now.getTime() + 60 * 60000)));
+  const [category, setCategory] = useState("");
+  const [repeatMinutes, setRepeatMinutes] = useState(0);
+  const [alertNotification, setAlertNotification] = useState(true);
+  const [alertSound, setAlertSound] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    if (initial) {
+      const d = new Date(initial.dueDateTime);
+      setTitle(initial.title || "");
+      setDescription(initial.description || "");
+      setPriority(initial.priority || "medium");
+      setDate(toLocalInputDate(d));
+      setTime(toLocalInputTime(d));
+      setCategory(initial.category || "");
+      setRepeatMinutes(initial.repeatMinutes ?? 0);
+      setAlertNotification(initial.alertNotification !== false);
+      setAlertSound(initial.alertSound !== false);
+    } else {
+      const n = new Date();
+      setTitle(""); setDescription(""); setPriority("medium");
+      setDate(toLocalInputDate(n));
+      setTime(toLocalInputTime(new Date(n.getTime() + 60 * 60000)));
+      setCategory(""); setRepeatMinutes(0);
+      setAlertNotification(true); setAlertSound(true);
+    }
+    setError("");
+  }, [open, initial]);
+
+  if (!open) return null;
+
+  const handleSubmit = () => {
+    if (!title.trim()) { setError(T.titleRequired); return; }
+    onSubmit({
+      title: title.trim(),
+      description: description.trim(),
+      priority,
+      dueDateTime: combineDateTime(date, time),
+      category: category.trim(),
+      repeatMinutes: Number(repeatMinutes),
+      alertNotification,
+      alertSound,
+    });
+  };
+
+  const inputCls = cx("w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2", th.border, th.inputBg, th.text, th.ring);
+  const labelCls = cx("text-xs font-semibold mb-1 block", th.muted);
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-end sm:items-center justify-center bg-black/60" onClick={onClose}>
+      <div
+        className={cx("w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto p-5 border", th.surface, th.text, th.border)}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold">{initial ? T.editTask : T.newTask}</h3>
+          <button onClick={onClose} className={th.muted}><X size={20} /></button>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className={labelCls}>{T.title}</label>
+            <input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
+          </div>
+          <div>
+            <label className={labelCls}>{T.description}</label>
+            <textarea className={cx(inputCls, "min-h-[60px] resize-none")} value={description} onChange={(e) => setDescription(e.target.value)} />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>{T.dueDate}</label>
+              <input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} />
+            </div>
+            <div>
+              <label className={labelCls}>{T.dueTime}</label>
+              <input type="time" className={inputCls} value={time} onChange={(e) => setTime(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>{T.priority}</label>
+              <select className={inputCls} value={priority} onChange={(e) => setPriority(e.target.value)}>
+                <option value="low">{T.low}</option>
+                <option value="medium">{T.medium}</option>
+                <option value="high">{T.high}</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>{T.category}</label>
+              <input list="pwrc-categories" className={inputCls} value={category} onChange={(e) => setCategory(e.target.value)} />
+              <datalist id="pwrc-categories">
+                {CATEGORY_SUGGESTIONS.map((c) => <option key={c} value={c} />)}
+              </datalist>
+            </div>
+          </div>
+
+          <div>
+            <label className={labelCls}>{T.repeat}</label>
+            <select className={inputCls} value={repeatMinutes} onChange={(e) => setRepeatMinutes(e.target.value)}>
+              {REPEAT_OPTIONS.map((m) => <option key={m} value={m}>{T[repeatLabelKey(m)]}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label className={labelCls}>{T.alertVia}</label>
+            <div className="flex gap-4">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={alertNotification} onChange={(e) => setAlertNotification(e.target.checked)} />
+                {T.notification}
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={alertSound} onChange={(e) => setAlertSound(e.target.checked)} />
+                {T.sound}
+              </label>
+            </div>
+          </div>
+
+          {error && <p className="text-red-400 text-sm">{error}</p>}
+
+          <div className="flex gap-2 pt-2">
+            <button onClick={onClose} className={cx("flex-1 rounded-lg border py-2.5 text-sm font-semibold", th.border, th.muted)}>
+              {T.cancel}
+            </button>
+            <button onClick={handleSubmit} className="flex-1 rounded-lg py-2.5 text-sm font-bold bg-amber-400 text-slate-900 hover:bg-amber-300">
+              {T.save}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/*  Bottom tab bar / side nav                                              */
+/* ---------------------------------------------------------------------- */
+function TabBar({ active, setActive, T, th }) {
+  const tabs = [
+    { key: "home", label: T.home, icon: HomeIcon },
+    { key: "calendar", label: T.calendar, icon: CalendarDays },
+    { key: "completed", label: T.completed, icon: ListChecks },
+    { key: "settings", label: T.settings, icon: SettingsIcon },
+  ];
+  return (
+    <div className={cx("fixed bottom-0 left-0 right-0 border-t flex sm:hidden", th.border, th.surface)}>
+      {tabs.map(({ key, label, icon: Icon }) => (
+        <button
+          key={key}
+          onClick={() => setActive(key)}
+          className={cx("flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium", active === key ? "text-amber-400" : th.muted)}
+        >
+          <Icon size={19} />
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function SideNav({ active, setActive, T, th }) {
+  const tabs = [
+    { key: "home", label: T.home, icon: HomeIcon },
+    { key: "calendar", label: T.calendar, icon: CalendarDays },
+    { key: "completed", label: T.completed, icon: ListChecks },
+    { key: "settings", label: T.settings, icon: SettingsIcon },
+  ];
+  return (
+    <div className={cx("hidden sm:flex flex-col w-48 shrink-0 border-r py-4", th.border, th.surface)}>
+      <p className={cx("px-4 text-xs uppercase tracking-wide font-semibold mb-2", th.muted)}>{T.appName}</p>
+      {tabs.map(({ key, label, icon: Icon }) => (
+        <button
+          key={key}
+          onClick={() => setActive(key)}
+          className={cx(
+            "flex items-center gap-3 px-4 py-2.5 text-sm text-left font-medium",
+            active === key ? "text-amber-400 bg-amber-400/10 border-r-2 border-amber-400" : th.muted
+          )}
+        >
+          <Icon size={17} /> {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/*  Main App                                                               */
+/* ---------------------------------------------------------------------- */
+function App() {
+  const [tasks, setTasks] = useState(() => storage.get(TASKS_KEY, []));
+  const [settings, setSettings] = useState(() => storage.get(SETTINGS_KEY, { dark: true, lang: "en" }));
+  const [activeTab, setActiveTab] = useState("home");
+  const [homeFilter, setHomeFilter] = useState("all");
+  const [now, setNow] = useState(new Date());
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
+  const [notifPermission, setNotifPermission] = useState(
+    typeof window !== "undefined" && "Notification" in window ? Notification.permission : "unsupported"
+  );
+  const [toast, setToast] = useState("");
+  const fileInputRef = useRef(null);
+  const notifPermissionRef = useRef(notifPermission);
+  useEffect(() => { notifPermissionRef.current = notifPermission; }, [notifPermission]);
+
+  const lang = settings.lang;
+  const dark = settings.dark;
+  const T = translations[lang];
+  const th = useThemeTokens(dark);
+
+  useEffect(() => { storage.set(TASKS_KEY, tasks); }, [tasks]);
+  useEffect(() => { storage.set(SETTINGS_KEY, settings); }, [settings]);
+
+  useEffect(() => {
+    const iv = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(iv);
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(""), 2600);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  /* alert engine — checks every 15s while the tab is open */
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const nowTs = Date.now();
+      setTasks((prev) => {
+        let changed = false;
+        const updated = prev.map((t) => {
+          if (t.completed) return t;
+          const dueTs = new Date(t.dueDateTime).getTime();
+          const snoozedTs = t.snoozedUntil ? new Date(t.snoozedUntil).getTime() : 0;
+          if (dueTs <= nowTs && snoozedTs <= nowTs) {
+            const lastTs = t.lastNotifiedAt ? new Date(t.lastNotifiedAt).getTime() : 0;
+            const intervalMs = (t.repeatMinutes && t.repeatMinutes > 0 ? t.repeatMinutes : 5) * 60000;
+            if (nowTs - lastTs >= intervalMs) {
+              if (t.alertNotification && notifPermissionRef.current === "granted") {
+                try {
+                  const n = new Notification(t.title, { body: t.description || t.category || "Pending Work Reminder", tag: t.id });
+                  n.onclick = () => window.focus();
+                } catch (e) {}
+              }
+              if (t.alertSound) playBeep();
+              changed = true;
+              return { ...t, lastNotifiedAt: new Date().toISOString() };
+            }
+          }
+          return t;
+        });
+        return changed ? updated : prev;
+      });
+    }, 15000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const { overdue, today, upcoming, completed, pendingCount } = useMemo(() => {
+    const pending = tasks.filter((t) => !t.completed);
+    const overdue = pending.filter((t) => getStatus(t, now) === "overdue").sort((a, b) => new Date(a.dueDateTime) - new Date(b.dueDateTime));
+    const today = pending.filter((t) => getStatus(t, now) === "today").sort((a, b) => new Date(a.dueDateTime) - new Date(b.dueDateTime));
+    const upcoming = pending.filter((t) => getStatus(t, now) === "upcoming").sort((a, b) => new Date(a.dueDateTime) - new Date(b.dueDateTime));
+    const completed = tasks.filter((t) => t.completed).sort((a, b) => new Date(b.dueDateTime) - new Date(a.dueDateTime));
+    return { overdue, today, upcoming, completed, pendingCount: pending.length };
+  }, [tasks, now]);
+
+  const addOrUpdateTask = useCallback((data) => {
+    if (editingTask) {
+      setTasks((prev) => prev.map((t) => (t.id === editingTask.id ? { ...t, ...data, lastNotifiedAt: null } : t)));
+    } else {
+      setTasks((prev) => [
+        ...prev,
+        { id: uid(), ...data, completed: false, createdAt: new Date().toISOString(), snoozedUntil: null, lastNotifiedAt: null },
+      ]);
+    }
+    setModalOpen(false);
+    setEditingTask(null);
+  }, [editingTask]);
+
+  const toggleComplete = useCallback((id) => {
+    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, completed: !t.completed, lastNotifiedAt: null } : t)));
+  }, []);
+
+  const deleteTask = useCallback((id) => {
+    if (!window.confirm(T.confirmDelete)) return;
+    setTasks((prev) => prev.filter((t) => t.id !== id));
+  }, [T]);
+
+  const snoozeTask = useCallback((id, minutes) => {
+    setTasks((prev) => prev.map((t) => (
+      t.id === id ? { ...t, snoozedUntil: new Date(Date.now() + minutes * 60000).toISOString(), lastNotifiedAt: new Date().toISOString() } : t
+    )));
+  }, []);
+
+  const requestNotifPermission = async () => {
+    if (!("Notification" in window)) { setNotifPermission("unsupported"); return; }
+    const res = await Notification.requestPermission();
+    setNotifPermission(res);
+  };
+
+  const exportBackup = () => {
+    const payload = { tasks, settings, exportedAt: new Date().toISOString() };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pending-work-backup-${toLocalInputDate(new Date())}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const importBackup = (file) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        if (Array.isArray(parsed.tasks)) {
+          setTasks(parsed.tasks);
+          if (parsed.settings) setSettings((s) => ({ ...s, ...parsed.settings }));
+          setToast(T.importSuccess);
+        } else {
+          setToast(T.importFail);
+        }
+      } catch (e) {
+        setToast(T.importFail);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const clearAll = () => {
+    if (!window.confirm(T.clearConfirm)) return;
+    setTasks([]);
+  };
+
+  const openEdit = (task) => { setEditingTask(task); setModalOpen(true); };
+  const openAdd = () => { setEditingTask(null); setModalOpen(true); };
+
+  const calendarGroups = useMemo(() => {
+    const map = {};
+    tasks.filter((t) => !t.completed).forEach((t) => {
+      const key = toLocalInputDate(new Date(t.dueDateTime));
+      if (!map[key]) map[key] = [];
+      map[key].push(t);
+    });
+    return Object.entries(map)
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([date, items]) => [date, items.sort((a, b) => new Date(a.dueDateTime) - new Date(b.dueDateTime))]);
+  }, [tasks]);
+
+  const rowProps = { now, T, lang, th, onToggle: toggleComplete, onEdit: openEdit, onDelete: deleteTask, onSnooze: snoozeTask };
+
+  return (
+    <div className={cx("min-h-screen font-sans", th.bg, th.text)}>
+      <div className="flex max-w-4xl mx-auto sm:min-h-screen">
+        <SideNav active={activeTab} setActive={setActiveTab} T={T} th={th} />
+
+        <div className="flex-1 pb-24 sm:pb-6 min-w-0">
+          <ClockHero now={now} T={T} lang={lang} th={th} pendingCount={pendingCount} />
+
+          {activeTab === "home" && (
+            <>
+              <StatCards
+                counts={{ overdue: overdue.length, today: today.length, upcoming: upcoming.length, completed: completed.length }}
+                filter={homeFilter}
+                setFilter={setHomeFilter}
+                T={T}
+                th={th}
+              />
+              <div className="px-3 pt-3 pb-4">
+                {tasks.length === 0 ? (
+                  <p className={cx("py-8 text-center text-sm", th.muted)}>{T.noTasksAtAll}</p>
+                ) : (
+                  <>
+                    {(homeFilter === "all" || homeFilter === "overdue") && (
+                      <Section label={T.overdue} count={overdue.length} icon={AlertOctagon} iconBg="bg-red-500/15" iconText="text-red-400" empty={T.noOverdue} th={th}>
+                        {overdue.map((t) => <TaskCard key={t.id} task={t} {...rowProps} />)}
+                      </Section>
+                    )}
+                    {(homeFilter === "all" || homeFilter === "today") && (
+                      <Section label={T.dueToday} count={today.length} icon={Sunrise} iconBg="bg-amber-400/15" iconText="text-amber-400" empty={T.noToday} th={th}>
+                        {today.map((t) => <TaskCard key={t.id} task={t} {...rowProps} />)}
+                      </Section>
+                    )}
+                    {(homeFilter === "all" || homeFilter === "upcoming") && (
+                      <Section label={T.upcoming} count={upcoming.length} icon={CalendarClock} iconBg="bg-sky-400/15" iconText="text-sky-400" empty={T.noUpcoming} th={th}>
+                        {upcoming.map((t) => <TaskCard key={t.id} task={t} {...rowProps} />)}
+                      </Section>
+                    )}
+                    {homeFilter === "completed" && (
+                      <Section label={T.completed} count={completed.length} icon={CheckCircle2} iconBg="bg-emerald-400/15" iconText="text-emerald-400" empty={T.noCompleted} th={th}>
+                        {completed.map((t) => <TaskCard key={t.id} task={t} {...rowProps} />)}
+                      </Section>
+                    )}
+                  </>
+                )}
+              </div>
+            </>
+          )}
+
+          {activeTab === "calendar" && (
+            <div className="px-3 pt-4 pb-4">
+              {calendarGroups.length === 0 ? (
+                <p className={cx("py-8 text-center text-sm", th.muted)}>{T.calendarEmpty}</p>
+              ) : (
+                calendarGroups.map(([date, items]) => (
+                  <div key={date} className="mb-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <ChevronRight size={14} className="text-amber-400" />
+                      <h3 className={cx("text-sm font-bold", th.text)}>{formatDateLabel(date, lang)}</h3>
+                    </div>
+                    <div className="space-y-2">
+                      {items.map((t) => <TaskCard key={t.id} task={t} {...rowProps} />)}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {activeTab === "completed" && (
+            <div className="px-3 pt-4 pb-4">
+              {completed.length === 0 ? (
+                <p className={cx("py-8 text-center text-sm", th.muted)}>{T.noCompleted}</p>
+              ) : (
+                <div className="space-y-2">
+                  {completed.map((t) => <TaskCard key={t.id} task={t} {...rowProps} />)}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === "settings" && (
+            <div className="px-4 pt-4 pb-4 space-y-6">
+              <div>
+                <h3 className={cx("text-xs uppercase tracking-wide font-semibold mb-2", th.muted)}>{T.darkMode}</h3>
+                <button
+                  onClick={() => setSettings((s) => ({ ...s, dark: !s.dark }))}
+                  className={cx("w-full flex items-center justify-between rounded-xl border px-4 py-3", th.border, th.surface)}
+                >
+                  <span className="flex items-center gap-2 text-sm font-medium">{dark ? <Moon size={16} /> : <Sun size={16} />} {T.darkMode}</span>
+                  <span className={cx("h-6 w-10 rounded-full relative transition-colors", dark ? "bg-amber-400" : cx("border", th.border))}>
+                    <span className={cx("absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all", dark ? "left-5" : "left-0.5")} />
+                  </span>
+                </button>
+              </div>
+
+              <div>
+                <h3 className={cx("text-xs uppercase tracking-wide font-semibold mb-2", th.muted)}>{T.language}</h3>
+                <div className={cx("flex rounded-xl border overflow-hidden", th.border)}>
+                  {["en", "hi"].map((l) => (
+                    <button
+                      key={l}
+                      onClick={() => setSettings((s) => ({ ...s, lang: l }))}
+                      className={cx("flex-1 py-2.5 text-sm flex items-center justify-center gap-1.5",
+                        lang === l ? "bg-amber-400 text-slate-900 font-bold" : cx(th.surface, "font-medium"))}
+                    >
+                      <Languages size={14} /> {l === "en" ? "English" : "हिन्दी"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <h3 className={cx("text-xs uppercase tracking-wide font-semibold mb-2", th.muted)}>{T.notifPermTitle}</h3>
+                <div className={cx("rounded-xl border px-4 py-3", th.border, th.surface)}>
+                  <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-2 text-sm font-medium">
+                      {notifPermission === "granted" ? <Bell size={16} className="text-amber-400" /> : <BellOff size={16} className={th.muted} />}
+                      {notifPermission === "granted" ? T.granted : notifPermission === "denied" ? T.denied : notifPermission === "unsupported" ? T.unsupported : T.notAsked}
+                    </span>
+                    {notifPermission !== "granted" && notifPermission !== "unsupported" && (
+                      <button onClick={requestNotifPermission} className="text-xs px-3 py-1.5 rounded-lg bg-amber-400 text-slate-900 font-bold">
+                        {T.enableNotif}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h3 className={cx("text-xs uppercase tracking-wide font-semibold mb-2", th.muted)}>{T.dataTitle}</h3>
+                <div className="space-y-2">
+                  <button onClick={exportBackup} className={cx("w-full flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium", th.border, th.surface)}>
+                    <Download size={16} /> {T.exportBackup}
+                  </button>
+                  <button onClick={() => fileInputRef.current?.click()} className={cx("w-full flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium", th.border, th.surface)}>
+                    <Upload size={16} /> {T.importBackup}
+                  </button>
+                  <input
+                    ref={fileInputRef} type="file" accept="application/json" className="hidden"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) importBackup(f); e.target.value = ""; }}
+                  />
+                  <button onClick={clearAll} className="w-full flex items-center gap-2 rounded-xl border border-red-500/40 px-4 py-3 text-sm font-medium text-red-400">
+                    <Trash2 size={16} /> {T.clearAll}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <button
+        onClick={openAdd}
+        className="fixed right-4 bottom-20 sm:bottom-6 h-14 w-14 rounded-full bg-amber-400 text-slate-900 shadow-lg flex items-center justify-center hover:bg-amber-300 z-30"
+        aria-label={T.addTask}
+      >
+        <Plus size={26} strokeWidth={2.5} />
+      </button>
+
+      <TabBar active={activeTab} setActive={setActiveTab} T={T} th={th} />
+
+      <TaskFormModal
+        open={modalOpen}
+        onClose={() => { setModalOpen(false); setEditingTask(null); }}
+        onSubmit={addOrUpdateTask}
+        initial={editingTask}
+        T={T}
+        th={th}
+      />
+
+      {toast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-sm px-4 py-2 rounded-lg shadow-lg z-50 flex items-center gap-2 border border-slate-700">
+          <AlertTriangle size={14} className="text-amber-400" /> {toast}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+const rootEl = document.getElementById("root");
+ReactDOM.createRoot(rootEl).render(
+  <ErrorBoundary><App /></ErrorBoundary>
+);
+
+</script>
+
+<script>
+(function () {
+  var diag = document.getElementById("diag");
+  function log(msg) { diag.textContent += msg + "\n"; }
+  function showError(label, err) {
+    var box = document.getElementById("boot-error");
+    box.style.display = "block";
+    var detail = (err && err.stack) ? err.stack : (err && err.message ? err.message : String(err));
+    box.textContent += label + ": " + detail + "\n\n";
+    log(label + " -- see red text below");
+  }
+
+  log("Tailwind: " + (window.tailwind ? "loaded" : "NOT loaded"));
+  log("React: " + (window.React ? "loaded (v" + window.React.version + ")" : "NOT loaded"));
+  log("ReactDOM: " + (window.ReactDOM ? "loaded" : "NOT loaded"));
+  log("ReactDOM.createRoot: " + (window.ReactDOM && window.ReactDOM.createRoot ? "available" : "MISSING"));
+  log("Babel: " + (window.Babel ? "loaded" : "NOT loaded"));
+
+  try {
+    var sourceEl = document.getElementById("app-source");
+    log("Source element found: " + (sourceEl ? "yes" : "NO"));
+    var source = sourceEl.textContent;
+    log("Source length: " + source.length + " chars");
+
+    var result = Babel.transform(source, { presets: ["react"], filename: "app.jsx" });
+    log("Babel compile: OK (" + result.code.length + " chars output)");
+
+    var script = document.createElement("script");
+    script.textContent = result.code;
+    document.body.appendChild(script);
+    log("Script appended to page.");
+
+    setTimeout(function () {
+      var rootEl = document.getElementById("root");
+      log("Root element children after 500ms: " + rootEl.children.length);
+      if (rootEl.children.length === 0) {
+        log("Nothing rendered into #root -- app code ran but produced no output, or React never called render.");
+      } else {
+        log("App appears to have rendered.");
+      }
+    }, 500);
+  } catch (err) {
+    showError("Compile error", err);
+  }
+
+  window.addEventListener("error", function (e) {
+    if (e.error) showError("Runtime error", e.error);
+  });
+})();
+</script>
+
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("sw.js").catch(function () {});
+    });
+  }
+</script>
+</body>
+</html>
